@@ -1,0 +1,19 @@
+# .gitignore
+*.class
+*.log
+
+# sbt specific
+.bsp/
+target/
+lib_managed/
+src_managed/
+project/boot/
+project/target/
+project/project/
+
+# IDE specific (VSCode / Metals / IntelliJ)
+.bsp/
+.metals/
+.idea/
+.vscode/
+*.iml
