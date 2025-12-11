@@ -1,8 +1,11 @@
-import data.InitialData
-import routes.GeoIndiceRoutes
+import zio._
+import zio.http._
+
+import database.{DatabaseLayer, Schema}
+import repository.GeoIndiceRepositoryLive
 import service.GeoIndiceServiceLive
-import zio.*
-import zio.http.*
+import routes.GeoIndiceRoutes
+import seeder.Seeder
 
 /**
  * Point d'entrée de l'application GeoGrimoire API.
@@ -11,26 +14,27 @@ import zio.http.*
  * des "Meta" (astuces de reconnaissance géographique) comme les langues,
  * les drapeaux, les infrastructures, et le sens de conduite.
  * 
- * Architecture :
+ * Architecture V2 (PostgreSQL) :
+ * - database/ : Configuration Quill et schéma SQL
  * - model/ : Définition des données (GeoIndice)
- * - data/ : Données initiales pré-chargées
- * - service/ : Logique métier et gestion de l'état
- * - routes/ : Endpoints HTTP (GET /indices, GET /indices/random, POST /indices)
+ * - repository/ : Couche d'accès aux données (Quill queries)
+ * - service/ : Logique métier
+ * - routes/ : Endpoints HTTP + Interface web
+ * - seeder/ : Initialisation des données
  * 
  * Stack technique :
  * - Scala 3
  * - ZIO 2 (programmation fonctionnelle pure)
- * - ZIO-Http 3.0.0-RC4
+ * - ZIO-Http 3.0.0-RC4 (serveur + routes)
  * - ZIO-Json (sérialisation)
+ * - ZIO-Quill 4.8.0 (accès base de données)
+ * - PostgreSQL 15 (persistance)
  * - ZIO-Logging (logs console)
  */
 object GeoGrimoireApi extends ZIOAppDefault {
   
   /**
    * Configuration du système de logging.
-   * 
-   * Remplace le logger par défaut de ZIO par un console logger
-   * pour afficher les logs dans la sortie standard.
    */
   override val bootstrap: ZLayer[ZIOAppArgs, Any, Any] =
     Runtime.removeDefaultLoggers >>> zio.logging.consoleLogger()
@@ -39,34 +43,68 @@ object GeoGrimoireApi extends ZIOAppDefault {
    * Point d'entrée de l'application.
    * 
    * Workflow :
-   * 1. Chargement des données initiales
-   * 2. Initialisation du service métier
-   * 3. Configuration des routes HTTP
-   * 4. Démarrage du serveur sur le port 8080
+   * 1. Connexion à la base de données
+   * 2. Création des tables si nécessaire
+   * 3. Seeding des données initiales (si vide)
+   * 4. Démarrage du serveur HTTP sur le port 8080
    */
   def run: ZIO[Any, Throwable, Unit] = {
+    // Route pour servir le fichier HTML statique
+    val staticRoutes = Routes(
+      Method.GET / "" -> handler {
+        ZIO.succeed(Response.redirect(URL.decode("/index.html").toOption.get))
+      },
+      Method.GET / "index.html" -> handler {
+        ZIO.attempt {
+          val stream = getClass.getClassLoader.getResourceAsStream("public/index.html")
+          if (stream == null) throw new RuntimeException("index.html not found")
+          val content = scala.io.Source.fromInputStream(stream, "UTF-8").mkString
+          stream.close()
+          Response(
+            status = Status.Ok,
+            headers = Headers(Header.ContentType(MediaType.text.html)),
+            body = Body.fromString(content)
+          )
+        }.catchAll { error =>
+          ZIO.logError(s"Error loading index.html: ${error.getMessage}") *>
+          ZIO.succeed(Response.text("Error loading page").status(Status.NotFound))
+        }
+      }
+    )
+    
+    val allRoutes = (staticRoutes ++ GeoIndiceRoutes()).toHttpApp
+    
     val app = for {
       _ <- ZIO.logInfo("=== Démarrage de GeoGrimoire API ===")
-      _ <- ZIO.logInfo(s"Chargement de ${InitialData.indices.size} indices initiaux...")
       
-      // Démarrage du serveur HTTP avec injection des dépendances
-      _ <- Server
-        .serve(GeoIndiceRoutes().toHttpApp)
-        .provide(
-          // Configuration du serveur (port 8080 par défaut)
-          Server.default,
-          // Injection du service avec les données initiales
-          GeoIndiceServiceLive.layer(InitialData.indices)
-        )
+      // Étape 1 : Création des tables
+      _ <- ZIO.logInfo("📊 Initialisation du schéma de base de données...")
+      _ <- Schema.createTables
       
-      _ <- ZIO.logInfo("Serveur HTTP démarré sur http://localhost:8080")
-      _ <- ZIO.logInfo("Endpoints disponibles :")
-      _ <- ZIO.logInfo("  - GET  /indices          : Liste des indices (avec filtres optionnels)")
+      // Étape 2 : Seeding
+      _ <- Seeder.seed
+      
+      // Étape 3 : Démarrage du serveur HTTP
+      _ <- ZIO.logInfo("🚀 Démarrage du serveur HTTP sur le port 8080...")
+      _ <- Server.serve(allRoutes)
+      
+      _ <- ZIO.logInfo("✅ Serveur HTTP démarré")
+      _ <- ZIO.logInfo("📍 Endpoints disponibles :")
+      _ <- ZIO.logInfo("  - GET  /                 : Interface web")
+      _ <- ZIO.logInfo("  - GET  /index.html       : Interface web")
+      _ <- ZIO.logInfo("  - GET  /health           : Health check")
+      _ <- ZIO.logInfo("  - GET  /indices          : Liste des indices (avec filtres)")
       _ <- ZIO.logInfo("  - GET  /indices/random   : Indice aléatoire")
-      _ <- ZIO.logInfo("  - POST /indices          : Ajouter un nouvel indice")
+      _ <- ZIO.logInfo("  - POST /indices          : Ajouter un indice")
       
     } yield ()
     
-    app
+    // Composition des layers
+    app.provide(
+      Server.default,
+      DatabaseLayer.live,
+      GeoIndiceRepositoryLive.layer,
+      GeoIndiceServiceLive.layer
+    )
   }
 }

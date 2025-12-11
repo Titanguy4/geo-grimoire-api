@@ -9,7 +9,9 @@ import zio.json.*
 /**
  * Définition des routes HTTP de l'API GeoGrimoire.
  * 
- * Expose trois endpoints :
+ * Expose les endpoints :
+ * - GET /health : Health check de l'API et de la base de données
+ * - GET /ui : Interface web pour gérer les indices
  * - GET /indices : Liste des indices avec filtrage optionnel
  * - GET /indices/random : Un indice aléatoire
  * - POST /indices : Ajout d'un nouvel indice
@@ -27,10 +29,37 @@ object GeoIndiceRoutes {
   def apply(): Routes[GeoIndiceService, Response] = Routes(
     
     // ========================================
+    // GET /health - Health check
+    // ========================================
+    Method.GET / "health" -> handler {
+      for {
+        _ <- ZIO.logInfo("GET /health - Health check")
+        
+        // Vérifier la connectivité à la base de données
+        countResult <- GeoIndiceService.count.either
+        
+        response <- countResult match {
+          case Right(count) =>
+            ZIO.succeed(
+              Response.json(s"""{"status":"healthy","database":"connected","indices":$count}""")
+                .status(Status.Ok)
+            )
+          
+          case Left(error) =>
+            ZIO.logError(s"Health check failed: ${error.getMessage}") *>
+            ZIO.succeed(
+              Response.json(s"""{"status":"unhealthy","database":"disconnected","error":"${error.getMessage}"}""")
+                .status(Status.ServiceUnavailable)
+            )
+        }
+      } yield response
+    },
+    
+    // ========================================
     // GET /indices - Liste avec filtrage
     // ========================================
     Method.GET / "indices" -> handler { (req: Request) =>
-      for {
+      (for {
         _ <- ZIO.logInfo("GET /indices - Requête reçue")
         
         // Extraction des paramètres de query string
@@ -49,14 +78,14 @@ object GeoIndiceRoutes {
         
         // Conversion en JSON et envoi de la réponse
         response <- ZIO.succeed(Response.json(filtered.toJson))
-      } yield response
+      } yield response).orDie
     },
     
     // ========================================
     // GET /indices/random - Indice aléatoire
     // ========================================
     Method.GET / "indices" / "random" -> handler {
-      for {
+      (for {
         _ <- ZIO.logInfo("GET /indices/random - Requête reçue")
         
         // Récupération d'un indice aléatoire
@@ -76,7 +105,7 @@ object GeoIndiceRoutes {
                 .status(Status.NotFound)
             )
         }
-      } yield response
+      } yield response).orDie
     },
     
     // ========================================

@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: geogrimoire-db
+    environment:
+      POSTGRES_DB: geogrimoire
+      POSTGRES_USER: geouser
+      POSTGRES_PASSWORD: geopassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geouser -d geogrimoire"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
