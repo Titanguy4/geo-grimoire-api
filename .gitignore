@@ -4,6 +4,7 @@
 
 # sbt specific
 .bsp/
+.bloop/
 target/
 lib_managed/
 src_managed/

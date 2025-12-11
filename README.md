@@ -12,11 +12,13 @@ Scala 3 / ZIO HTTP service exposing geographic tips (“indices”) stored in Po
 ## Prerequisites
 
 - JDK 17+
+- PostgreSQL reachable (Docker Compose provided)
 
 ## Setup
 
-1. Run docker compose for initialize the database
-2. Fetch dependencies and compile: `sbt clean compile`.
+1. Start the DB (Docker Compose): `docker compose up -d`
+2. Install dependencies and compile: `sbt clean compile`
+3. (Optional) Generate Bloop files for faster IDE builds: `sbt bloopInstall`
 
 ## Run
 
@@ -32,3 +34,7 @@ Scala 3 / ZIO HTTP service exposing geographic tips (“indices”) stored in Po
 ## Tests
 
 - Run the suite: `sbt test`.
+
+## Notes
+
+- Bloop is optional. If you do not use it, you can ignore step 3 above; sbt alone is enough.
