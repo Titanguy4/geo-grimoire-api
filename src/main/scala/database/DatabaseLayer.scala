@@ -1,8 +1,8 @@
 package database
 
-import io.getquill._
+import io.getquill.*
 import io.getquill.jdbczio.Quill
-import zio._
+import zio.*
 import com.zaxxer.hikari.HikariConfig
 import javax.sql.DataSource
 
@@ -17,8 +17,8 @@ object DatabaseLayer {
   /**
    * Layer du DataSource avec HikariCP.
    */
-  val dataSourceLayer: ZLayer[Any, Throwable, DataSource] = {
-    ZLayer {
+  val dataSourceLayer: ZLayer[Any, Throwable, DataSource] =
+    ZLayer.fromZIO {
       ZIO.attempt {
         val config = new HikariConfig()
         config.setJdbcUrl("jdbc:postgresql://localhost:5432/geogrimoire")
@@ -34,7 +34,6 @@ object DatabaseLayer {
         new com.zaxxer.hikari.HikariDataSource(config)
       }
     }
-  }
   
   /**
    * Layer Quill pour PostgreSQL avec naming strategy SnakeCase.

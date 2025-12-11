@@ -1,10 +1,9 @@
 package database
 
-import io.getquill._
+import io.getquill.*
 import io.getquill.jdbczio.Quill
-import zio._
+import zio.*
 import javax.sql.DataSource
-import java.sql.Connection
 
 /**
  * Schéma de la base de données.
@@ -46,23 +45,18 @@ object Schema {
   /**
    * Exécute une commande DDL via JDBC direct.
    */
-  private def executeDDL(sql: String): ZIO[DataSource, Throwable, Unit] = {
+  private def executeDDL(sql: String): ZIO[DataSource, Throwable, Unit] =
     ZIO.serviceWithZIO[DataSource] { ds =>
-      ZIO.attemptBlocking {
-        val conn: Connection = ds.getConnection
-        try {
-          val stmt = conn.createStatement()
-          try {
-            stmt.execute(sql)
-          } finally {
-            stmt.close()
-          }
-        } finally {
-          conn.close()
+      ZIO.acquireReleaseWith(
+        ZIO.attemptBlocking(ds.getConnection)
+      )(conn => ZIO.succeed(conn.close()).ignoreLogged) { conn =>
+        ZIO.acquireReleaseWith(
+          ZIO.attemptBlocking(conn.createStatement())
+        )(stmt => ZIO.succeed(stmt.close()).ignoreLogged) { stmt =>
+          ZIO.attemptBlocking(stmt.execute(sql)).unit
         }
       }
     }
-  }
   
   /**
    * Crée les tables de la base de données si elles n'existent pas.

@@ -1,7 +1,7 @@
 package service
 
 import model.GeoIndice
-import zio._
+import zio.*
 import repository.GeoIndiceRepository
 
 /**
@@ -76,15 +76,8 @@ final case class GeoIndiceServiceLive(repository: GeoIndiceRepository) extends G
 
 object GeoIndiceServiceLive {
   
-  /**
-   * Layer pour le service.
-   */
   val layer: ZLayer[GeoIndiceRepository, Nothing, GeoIndiceService] =
-    ZLayer {
-      for {
-        repo <- ZIO.service[GeoIndiceRepository]
-      } yield GeoIndiceServiceLive(repo)
-    }
+    ZLayer.fromFunction(GeoIndiceServiceLive.apply)
 }
 
 /**

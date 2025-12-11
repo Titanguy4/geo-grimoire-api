@@ -1,10 +1,10 @@
 package repository
 
-import io.getquill._
+import database.Schema.*
+import io.getquill.*
 import io.getquill.jdbczio.Quill
-import zio._
 import model.GeoIndice
-import database.Schema._
+import zio.*
 
 /**
  * Repository pour les opérations CRUD sur les indices géographiques.
@@ -85,36 +85,37 @@ final case class GeoIndiceRepositoryLive(quill: Quill.Postgres[SnakeCase]) exten
     category: Option[String],
     searchQuery: Option[String]
   ): Task[List[GeoIndice]] = {
-    for {
-      // Récupérer tous les indices (on filtrera en mémoire)
-      allIndices <- getAll
-      
-      // Filtrer selon les critères
-      filtered = allIndices.filter { indice =>
-        val countryMatch = country.forall(c => indice.country.toLowerCase.contains(c.toLowerCase))
-        val regionMatch = region.forall(r => indice.region.toLowerCase.contains(r.toLowerCase))
-        val categoryMatch = category.forall(cat => indice.category.toLowerCase.contains(cat.toLowerCase))
-        val queryMatch = searchQuery.forall { q =>
-          val qLower = q.toLowerCase
-          indice.content.toLowerCase.contains(qLower) ||
-          indice.keywords.exists(_.toLowerCase.contains(qLower))
-        }
-        
-        countryMatch && regionMatch && categoryMatch && queryMatch
+    // Prédicats de filtrage en style fonctionnel
+    def matchesCountry(indice: GeoIndice): Boolean =
+      country.forall(c => indice.country.toLowerCase.contains(c.toLowerCase))
+    
+    def matchesRegion(indice: GeoIndice): Boolean =
+      region.forall(r => indice.region.toLowerCase.contains(r.toLowerCase))
+    
+    def matchesCategory(indice: GeoIndice): Boolean =
+      category.forall(cat => indice.category.toLowerCase.contains(cat.toLowerCase))
+    
+    def matchesQuery(indice: GeoIndice): Boolean =
+      searchQuery.forall { q =>
+        val qLower = q.toLowerCase
+        indice.content.toLowerCase.contains(qLower) ||
+        indice.keywords.exists(_.toLowerCase.contains(qLower))
       }
-      
-    } yield filtered
+    
+    // Composition de tous les prédicats
+    val matchesAll: GeoIndice => Boolean = indice =>
+      matchesCountry(indice) && matchesRegion(indice) && 
+      matchesCategory(indice) && matchesQuery(indice)
+    
+    getAll.map(_.filter(matchesAll))
   }
   
   /**
    * Récupère un indice aléatoire.
    */
-  override def getRandom: Task[Option[GeoIndice]] = {
-    for {
-      totalCount <- count
-      result <- if (totalCount == 0) {
-        ZIO.succeed(None)
-      } else {
+  override def getRandom: Task[Option[GeoIndice]] =
+    count.flatMap { totalCount =>
+      ZIO.when(totalCount > 0) {
         for {
           randomOffset <- Random.nextLongBounded(totalCount)
           offsetInt = randomOffset.toInt
@@ -125,23 +126,20 @@ final case class GeoIndiceRepositoryLive(quill: Quill.Postgres[SnakeCase]) exten
                 .take(1)
             }
           }
-          maybeIndice <- entities.headOption match {
-            case Some(entity) =>
-              getKeywordsForIndice(entity.id.get).map { keywords =>
-                Some(GeoIndice(
-                  country = entity.country,
-                  region = entity.region,
-                  category = entity.category,
-                  content = entity.content,
-                  keywords = keywords
-                ))
-              }
-            case None => ZIO.succeed(None)
+          maybeIndice <- ZIO.foreach(entities.headOption) { entity =>
+            getKeywordsForIndice(entity.id.get).map { keywords =>
+              GeoIndice(
+                country = entity.country,
+                region = entity.region,
+                category = entity.category,
+                content = entity.content,
+                keywords = keywords
+              )
+            }
           }
         } yield maybeIndice
-      }
-    } yield result
-  }
+      }.map(_.flatten)
+    }
   
   /**
    * Ajoute un nouvel indice avec ses keywords en transaction.
@@ -198,9 +196,8 @@ final case class GeoIndiceRepositoryLive(quill: Quill.Postgres[SnakeCase]) exten
   /**
    * Insère un keyword (ou récupère son ID s'il existe) et crée l'association.
    */
-  private def insertKeywordAndLink(indiceId: Long, keyword: String): Task[Unit] = {
+  private def insertKeywordAndLink(indiceId: Long, keyword: String): Task[Unit] =
     for {
-      // Vérifier si le keyword existe déjà
       existingKeywords <- run {
         quote {
           query[KeywordEntity]
@@ -208,42 +205,31 @@ final case class GeoIndiceRepositoryLive(quill: Quill.Postgres[SnakeCase]) exten
         }
       }
       
-      keywordId <- existingKeywords.headOption match {
-        case Some(existing) =>
-          ZIO.succeed(existing.id.get)
-        
-        case None =>
-          // Insérer le nouveau keyword
-          run {
-            quote {
-              query[KeywordEntity]
-                .insertValue(lift(KeywordEntity(None, keyword)))
-                .returningGenerated(_.id)
-            }
-          }.map(_.getOrElse(0L))
-      }
+      keywordId <- existingKeywords.headOption.fold(
+        // Aucun keyword existant : on l'insère
+        run {
+          quote {
+            query[KeywordEntity]
+              .insertValue(lift(KeywordEntity(None, keyword)))
+              .returningGenerated(_.id)
+          }
+        }.map(_.getOrElse(0L))
+      )(
+        // Keyword existant : on réutilise son ID
+        existing => ZIO.succeed(existing.id.get)
+      )
       
-      // Créer l'association
       _ <- run {
         quote {
           query[GeoIndiceKeywordEntity]
             .insertValue(lift(GeoIndiceKeywordEntity(indiceId, keywordId)))
         }
       }
-      
     } yield ()
-  }
 }
 
 object GeoIndiceRepositoryLive {
   
-  /**
-   * Layer pour le repository.
-   */
   val layer: ZLayer[Quill.Postgres[SnakeCase], Nothing, GeoIndiceRepository] =
-    ZLayer {
-      for {
-        quill <- ZIO.service[Quill.Postgres[SnakeCase]]
-      } yield GeoIndiceRepositoryLive(quill)
-    }
+    ZLayer.fromFunction(GeoIndiceRepositoryLive.apply)
 }

@@ -1,5 +1,5 @@
-import zio._
-import zio.http._
+import zio.*
+import zio.http.*
 
 import database.{DatabaseLayer, Schema}
 import repository.GeoIndiceRepositoryLive
